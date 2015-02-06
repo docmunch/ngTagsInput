@@ -35,12 +35,18 @@
  *                                                   When this flag is true, addOnEnter, addOnComma, addOnSpace, addOnBlur and
  *                                                   allowLeftoverText values are ignored.
  * @param {boolean=} [spellcheck=true] Flag indicating whether the browser's spellcheck is enabled for the input field or not.
+ * @param {expression} shouldAddTag A reference to a method in scope that will be invoked before adding a new tag. This is an option for additional, custom validations or a general way to prevent a tag from being added. The new tag is passed to the function for evaluation. This method must return either true or false. If false, the tag will not be added.
  * @param {expression} onTagAdded Expression to evaluate upon adding a new tag. The new tag is available as $tag.
  * @param {expression} onInvalidTag Expression to evaluate when a tag is invalid. The invalid tag is available as $tag.
+ * @param {expression} shouldRemoveTag A reference to a method in scope that will be invoked before removing a tag. This can be used to prevent a tag from being added. The tag is passed to the function for evaluation. This method must return either true or false. If false, the tag will not be removed.
  * @param {expression} onTagRemoved Expression to evaluate upon removing an existing tag. The removed tag is available as $tag.
  */
 tagsInput.directive('tagsInput', function($timeout, $document, tagsInputConfig) {
-    function TagList(options, events) {
+
+    function TagList(scope) {
+        var options = scope.options;
+        var events  = scope.events;
+
         var self = {}, getTagText, setTagText, tagIsValid;
 
         getTagText = function(tag) {
@@ -53,12 +59,17 @@ tagsInput.directive('tagsInput', function($timeout, $document, tagsInputConfig) 
 
         tagIsValid = function(tag) {
             var tagText = getTagText(tag);
+            var valid = tagText &&
+                     tagText.length >= options.minLength &&
+                     tagText.length <= options.maxLength &&
+                     options.allowedTagsPattern.test(tagText) &&
+                     !findInObjectArray(self.items, tag, options.displayProperty);
 
-            return tagText &&
-                   tagText.length >= options.minLength &&
-                   tagText.length <= options.maxLength &&
-                   options.allowedTagsPattern.test(tagText) &&
-                   !findInObjectArray(self.items, tag, options.displayProperty);
+            if (scope.shouldAddTag()) {
+                valid = valid && scope.shouldAddTag()(tag);
+            }
+
+            return valid;
         };
 
         self.items = [];
@@ -90,9 +101,18 @@ tagsInput.directive('tagsInput', function($timeout, $document, tagsInputConfig) 
         };
 
         self.remove = function(index) {
-            var tag = self.items.splice(index, 1)[0];
-            events.trigger('tag-removed', { $tag: tag });
-            return tag;
+            var tag = self.items[index];
+            var shouldRemove = true;
+
+            if (scope.shouldRemoveTag()) {
+                shouldRemove = scope.shouldRemoveTag()(tag);
+            }
+
+            if (shouldRemove)  {
+                self.items.splice(index, 1);
+                events.trigger('tag-removed', { $tag: tag });
+                return tag;
+            }
         };
 
         self.removeLast = function() {
@@ -121,8 +141,10 @@ tagsInput.directive('tagsInput', function($timeout, $document, tagsInputConfig) 
         require: 'ngModel',
         scope: {
             tags: '=ngModel',
+            shouldAddTag: '&',
             onTagAdded: '&',
             onInvalidTag: '&',
+            shouldRemoveTag: '&',
             onTagRemoved: '&'
         },
         replace: false,
@@ -155,7 +177,7 @@ tagsInput.directive('tagsInput', function($timeout, $document, tagsInputConfig) 
                 spellcheck: [Boolean, true]
             });
 
-            $scope.tagList = new TagList($scope.options, $scope.events);
+            $scope.tagList = new TagList($scope);
 
             this.registerAutocomplete = function() {
                 var input = $element.find('input');
